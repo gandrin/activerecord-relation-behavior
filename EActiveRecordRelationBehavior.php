@@ -222,27 +222,46 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 								$newRelatedRecords=array($newRelatedRecords);
 						}
 
-						// get related records as objects and primary keys
-						$newRelatedRecords=$this->primaryKeysToObjects($newRelatedRecords, $relation[1]);
-						$newPKs=$this->objectsToPrimaryKeys($newRelatedRecords);
+						// deals with through relations
+						if (isset($relation['through']) && !empty($relation['through'])) {
+							// get the relation in through
+							$relationThroughName=$relation['through'];
+							$relationThrough=$this->owner->relations()[$relationThroughName];
+							$relationModel=$relationThrough[1];
+							// Delete all previous relations
+							$relationModel::model()->deleteAllByAttributes(array($relationThrough[2] => $this->owner->getPrimaryKey()));
 
-						// update all not anymore related records
-						$criteria=new ECompositeDbCriteria();
-						$criteria->addNotInCondition(CActiveRecord::model($relation[1])->tableSchema->primaryKey, $newPKs);
-						// @todo add support for composite primary keys
-						$criteria->addColumnCondition(array($relation[2]=>$this->owner->getPrimaryKey()));
-						if (CActiveRecord::model($relation[1])->tableSchema->getColumn($relation[2])->allowNull) {
-							CActiveRecord::model($relation[1])->updateAll(array($relation[2]=>null), $criteria);
+							// create a new related model for each element.
+							foreach ($this->owner->getRelated($name, false) as $newRelatedRecord) {
+								$newRelatedRecordModel=new $relationModel;
+								$newRelatedRecordModel->attributes = $newRelatedRecord;
+								$newRelatedRecordModel->{$relationThrough[2]} = $this->owner->getPrimaryKey();
+								$r = $newRelatedRecordModel->save();
+							}
+
 						} else {
-							CActiveRecord::model($relation[1])->deleteAll($criteria);
-						}
+							// get related records as objects and primary keys
+							$newRelatedRecords=$this->primaryKeysToObjects($newRelatedRecords, $relation[1]);
+							$newPKs=$this->objectsToPrimaryKeys($newRelatedRecords);
 
-						/** @var CActiveRecord $record */
-						foreach($newRelatedRecords as $record) {
-							// only save if relation did not exist
+							// update all not anymore related records
+							$criteria=new ECompositeDbCriteria();
+							$criteria->addNotInCondition(CActiveRecord::model($relation[1])->tableSchema->primaryKey, $newPKs);
 							// @todo add support for composite primary keys
-							if ($record->{$relation[2]}===null || $record->{$relation[2]} !=  $this->owner->getPrimaryKey()) {
-								$record->saveAttributes(array($relation[2] => $this->owner->getPrimaryKey()));
+							$criteria->addColumnCondition(array($relation[2]=>$this->owner->getPrimaryKey()));
+							if (CActiveRecord::model($relation[1])->tableSchema->getColumn($relation[2])->allowNull) {
+								CActiveRecord::model($relation[1])->updateAll(array($relation[2]=>null), $criteria);
+							} else {
+								CActiveRecord::model($relation[1])->deleteAll($criteria);
+							}
+
+							/** @var CActiveRecord $record */
+							foreach($newRelatedRecords as $record) {
+								// only save if relation did not exist
+								// @todo add support for composite primary keys
+								if ($record->{$relation[2]}===null || $record->{$relation[2]} !=  $this->owner->getPrimaryKey()) {
+									$record->saveAttributes(array($relation[2] => $this->owner->getPrimaryKey()));
+								}
 							}
 						}
 
@@ -301,7 +320,7 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 	{
 		// @todo not sure about 'together', also check for joinType
 		return !isset($relation['on']) &&
-			   !isset($relation['through']) &&
+			   // !isset($relation['through']) &&
 			   !isset($relation['condition']) &&
 			   !isset($relation['group']) &&
 			   !isset($relation['join']) &&
