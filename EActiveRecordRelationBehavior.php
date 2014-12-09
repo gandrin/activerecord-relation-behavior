@@ -99,7 +99,7 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 					if (!$this->owner->hasRelated($name) || !$this->isRelationSupported($relation))
 						break;
 
-					$this->populateBelongsToAttribute($name, $relation, false);
+					$this->populateBelongsToAttribute($name, $relation);
 
 				break;
 			}
@@ -225,7 +225,7 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 						// deals with through relations
 						if (isset($relation['through']) && !empty($relation['through'])) {
 							// get the relation in through
-							$relationThroughName=$relation['through'];
+							/*$relationThroughName=$relation['through'];
 							$relationThrough=$this->owner->relations()[$relationThroughName];
 							$relationModel=$relationThrough[1];
 							// Delete all previous relations
@@ -237,6 +237,84 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 								$newRelatedRecordModel->attributes = $newRelatedRecord;
 								$newRelatedRecordModel->{$relationThrough[2]} = $this->owner->getPrimaryKey();
 								$r = $newRelatedRecordModel->save();
+							}*/
+							$relationThroughName = $relation['through'];
+							$relationThrough = $this->owner->relations()[$relationThroughName];
+							$relationThroughModel = $relationThrough[1];
+							// Load all previous relations.
+							$relatedThrough = $relationThroughModel::model()->findAllByAttributes(array($relationThrough[2] => $this->owner->getPrimaryKey()));
+							// Get the list of related records.
+							$newRelatedRecords = $this->owner->getRelated($name, false);
+							// This list will hold records that shouldn't be related anymore to the owner.
+							$relatedThroughToDelete = $relatedThrough;
+							// Error watcher.
+							$noError = TRUE;
+							// Looping to identify the differences between the new and the old POI on relatedThrough.
+							foreach ($relatedThrough as $key => $relatedThroughRecord)
+							{
+								foreach ($newRelatedRecords as $index => $newRelatedRecord)
+								{
+									// If an element is in both lists, we don't have to do anything.
+									$idMatch = TRUE;
+									foreach ($relation[2] as $relatedThroughColumnName => $relatedColumnName)
+									{
+										if ($relatedThroughRecord->$relatedThroughColumnName != $newRelatedRecord->$relatedColumnName)
+										{
+											$idMatch = FALSE;
+										}
+									}
+									if ($idMatch)
+									{
+										// We're deleting it from these two lists so that in $relatedThroughToDelete only stay relatedRecords that need to be "unrelated", and in $newRelatedRecords only stay relatedRecords that need relations creation.
+										unset($relatedThroughToDelete[$key]);
+										unset($newRelatedRecords[$index]);
+									}
+								}
+							}
+							// Looping to clean now unrelated records.
+							foreach ($relatedThroughToDelete as $relatedThrough)
+							{
+								if (!$relatedThrough->delete())
+								{
+									$noError = FAlSE;
+								}
+							}
+							// RelatedRecords creation.
+							foreach ($newRelatedRecords as $relatedRecord)
+							{
+								$newRelatedThroughRecord = new $relationThroughModel;
+								// Setting foreignKey to related record.
+								foreach ($relation[2] as $relatedThroughColumnName => $relatedColumnName)
+								{
+									$newRelatedThroughRecord->$relatedThroughColumnName = $relatedRecord->$relatedColumnName;
+								}
+								// Now dealing with the owner's primaryKey.
+								$foreignKey = $relationThrough[2];
+								if (!is_array($foreignKey))
+								{
+									$foreignKey = explode(',', $relationThrough[2]);
+								}
+								if (count($foreignKey)<2)
+								{
+									$newRelatedThroughRecord->$foreignKey[0] = $this->owner->getPrimaryKey();
+								}
+								else
+								{
+									$i = 0;
+									foreach ($foreignKey as $key)
+									{
+										$newRelatedThroughRecord->$key = $this->owner->getPrimaryKey()[$i];
+										$i++;
+									}
+								}
+								if (!$newRelatedThroughRecord->save())
+								{
+									$noError = FAlSE;
+								}
+							}
+							if(!$noError)
+							{
+								throw new CDbException('Error while trying to save or delete records.');
 							}
 
 						} else {
@@ -285,20 +363,16 @@ class EActiveRecordRelationBehavior extends CActiveRecordBehavior
 	 * Populates the BELONGS_TO relations attribute with the pk of the related model.
 	 * @param string $name the relation name
 	 * @param array $relation the relation config array
-	 * @param bool $beforeSave whether to check if the related record is not new to allow saving.
-	 * This can be false on beforeValidate.
-	 * @throws CDbException
 	 */
-	protected function populateBelongsToAttribute($name, $relation, $beforeSave = true)
+	protected function populateBelongsToAttribute($name, $relation)
 	{
 		$pk=null;
 		if (($related=$this->owner->getRelated($name, false))!==null) {
 			if (is_object($related)) {
 				/** @var CActiveRecord $related */
-				if (!$related->isNewRecord)
-					$pk=$related->getPrimaryKey();
-				elseif ($beforeSave)
+				if ($related->isNewRecord)
 					throw new CDbException('You can not save a record that has new related records!');
+				$pk=$related->getPrimaryKey();
 			} else {
 				$pk=$related;
 			}
